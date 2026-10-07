@@ -1,0 +1,103 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run test.q (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup kdb-x
+        uses: ./setup-kdb-x
+        with:
+          license-b64: ${{ secrets.KDB_LICENSE_B64 }}
+
+      - name: Run test.q
+        run: q test/test.q
+
+  test-unit:
+    name: Run test_unit.q (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup kdb-x
+        uses: ./setup-kdb-x
+        with:
+          license-b64: ${{ secrets.KDB_LICENSE_B64 }}
+
+      - name: Setup kdb-x module unit-test
+        uses: ./unit-test
+
+      - name: Run test_unit.q
+        run: q test/test_unit.q
+
+  test-qmamba:
+    name: Run test_qmamba.q (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # qmamba does not support Windows
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup kdb-x
+        uses: ./setup-kdb-x
+        with:
+          license-b64: ${{ secrets.KDB_LICENSE_B64 }}
+
+      - name: Setup kdb-x module qmamba
+        uses: ./qmamba
+
+      - name: Run test_qmamba.q
+        run: LD_LIBRARY_PATH="${QHOME}/root/lib" DYLD_LIBRARY_PATH="${QHOME}/root/lib" q test/test_qmamba.q
+
+  test-micromamba:
+    name: Test micromamba (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: testenv
+          create-args: >-
+            kx::q-kx-unit-test
+
+      - name: Setup kdb-x
+        uses: ./setup-kdb-x
+        with:
+          license-b64: ${{ secrets.KDB_LICENSE_B64 }}
+
+      - name: Run test_unit.q
+        if: runner.os != 'Windows'
+        shell: micromamba-shell {0}
+        run: |
+          QPATH="${CONDA_PREFIX}/lib/q/mod" q test/test_unit.q
+
+      - name: Run test_unit.q (Windows)
+        if: runner.os == 'Windows'
+        shell: bash -el {0}
+        run: |
+          # q.exe needs a Windows path, not a Git Bash one
+          PREFIX="$(cygpath -m "${CONDA_PREFIX}")"
+          QPATH="${PREFIX}/lib/q/mod" q test/test_unit.q
