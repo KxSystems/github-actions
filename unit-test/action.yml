@@ -1,0 +1,35 @@
+name: 'kdb-x module: unit-test'
+description: 'Install KxSystems/unit-test test.q into QHOME/mod/kx. Run after setup-kdb-x.'
+
+inputs:
+  ref:
+    description: 'Branch, tag or commit of KxSystems/unit-test to fetch test.q from'
+    required: false
+    default: 'main'
+  qhome:
+    description: 'Override QHOME (defaults to the QHOME env var set by setup-kdb-x)'
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Install unit-test module
+      shell: bash
+      env:
+        MODULE_REF: ${{ inputs.ref }}
+        INPUT_QHOME: ${{ inputs.qhome }}
+      run: |
+        set -euo pipefail
+
+        TARGET_HOME="${INPUT_QHOME:-${QHOME:-}}"
+        if [ -z "${TARGET_HOME}" ]; then
+          echo "::error::QHOME is not set. Run your-org/setup-kdb-x before this module (or pass the 'qhome' input)."
+          exit 1
+        fi
+
+        MODDIR="${TARGET_HOME}/mod/kx"
+        mkdir -p "${MODDIR}"
+        curl -fsSL --retry 3 \
+          -o "${MODDIR}/test.q" \
+          "https://raw.githubusercontent.com/KxSystems/unit-test/${MODULE_REF}/test.q"

@@ -1,0 +1,145 @@
+name: 'Setup kdb-x'
+description: 'Download kdb-x for the runner platform and install a license from a base64 string'
+
+inputs:
+  version:
+    description: 'kdb-x version to install, or "latest"'
+    required: false
+    default: 'latest'
+  license-b64:
+    description: 'Base64-encoded kc.lic/k4.lic contents (pass it from a repository secret, e.g. KDB_LICENSE_B64)'
+    required: true
+  license-type:
+    description: 'License type [kc.lic|k4.lic]'
+    required: false
+    default: 'kc.lic'
+  install-dir:
+    description: 'Directory to extract kdb-x into (becomes QHOME). Defaults to $RUNNER_TEMP/kdb-x'
+    required: false
+    default: ''
+  add-to-path:
+    description: 'Add QHOME and QHOME/<platform> to PATH'
+    required: false
+    default: 'true'
+
+outputs:
+  qhome:
+    description: 'Directory kdb-x was extracted to (QHOME)'
+    value: ${{ steps.install.outputs.qhome }}
+  platform:
+    description: 'Detected platform (l64, l64arm, m64 or w64)'
+    value: ${{ steps.install.outputs.platform }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve kdb-x platform and cache key
+      id: resolve
+      shell: bash
+      env:
+        RUNNER_OS_NAME: ${{ runner.os }}
+        RUNNER_ARCH_NAME: ${{ runner.arch }}
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+
+        # Pick the platform package
+        case "${RUNNER_OS_NAME}-${RUNNER_ARCH_NAME}" in
+          Linux-X64)    QPLATFORM=l64 ;;
+          Linux-ARM64)  QPLATFORM=l64arm ;;
+          macOS-*)      QPLATFORM=m64 ;;
+          Windows-X64)  QPLATFORM=w64 ;;
+          *) echo "::error::Unsupported runner: ${RUNNER_OS_NAME}-${RUNNER_ARCH_NAME}"; exit 1 ;;
+        esac
+
+        VERSION="${INPUT_VERSION:-latest}"
+        KEY="kdb-x-${QPLATFORM}-${VERSION}"
+        # "latest" moves, so rotate its cache entry once a day
+        if [ "${VERSION}" = "latest" ]; then KEY="${KEY}-$(date -u +%F)"; fi
+
+        echo "platform=${QPLATFORM}" >> "$GITHUB_OUTPUT"
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        echo "cache-key=${KEY}" >> "$GITHUB_OUTPUT"
+
+    - name: Cache kdb-x download
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/kdb-x-download
+        key: ${{ steps.resolve.outputs.cache-key }}
+
+    - name: Download and unzip kdb-x
+      id: install
+      shell: bash
+      env:
+        RUNNER_OS_NAME: ${{ runner.os }}
+        INPUT_INSTALL_DIR: ${{ inputs.install-dir }}
+        QPLATFORM: ${{ steps.resolve.outputs.platform }}
+        VERSION: ${{ steps.resolve.outputs.version }}
+      run: |
+        set -euo pipefail
+
+        QZip="${QPLATFORM}.zip"
+        DL_DIR="${RUNNER_TEMP}/kdb-x-download"
+        mkdir -p "${DL_DIR}"
+
+        QHOME="${INPUT_INSTALL_DIR:-${RUNNER_TEMP}/kdb-x}"
+        # On Windows (Git Bash) turn D:\a\_temp/kdb-x into D:/a/_temp/kdb-x so it
+        # behaves the same in bash, pwsh, cmd and q
+        if command -v cygpath >/dev/null 2>&1; then
+          QHOME="$(cygpath -m "${QHOME}")"
+        fi
+        mkdir -p "${QHOME}"
+
+        if [ -s "${DL_DIR}/${QZip}" ]; then
+          echo "Using cached ${QZip}"
+        else
+          if [ "${VERSION}" = "latest" ]; then VERSION="~latest~"; fi
+          URL="https://portal.dl.kx.com/assets/raw/kdb-x/kdb-x/${VERSION}/${QZip}"
+          echo "Downloading ${URL}"
+          curl -fsSL --retry 3 -o "${DL_DIR}/${QZip}.part" "${URL}"
+          mv "${DL_DIR}/${QZip}.part" "${DL_DIR}/${QZip}"
+        fi
+
+        if command -v unzip >/dev/null 2>&1; then
+          unzip -q -o "${DL_DIR}/${QZip}" -d "${QHOME}"
+        else
+          7z x -y -o"${QHOME}" "${DL_DIR}/${QZip}" >/dev/null
+        fi
+
+        echo "QHOME=${QHOME}" >> "$GITHUB_ENV"
+        echo "qhome=${QHOME}" >> "$GITHUB_OUTPUT"
+        echo "platform=${QPLATFORM}" >> "$GITHUB_OUTPUT"
+
+    - name: Create kdb-x license
+      shell: bash
+      env:
+        KDB_LICENSE_B64: ${{ inputs.license-b64 }}
+        LICENSE_TYPE: ${{ inputs.license-type }}
+      run: |
+        set -euo pipefail
+        if [ -z "${KDB_LICENSE_B64}" ]; then
+          echo "::error::license-b64 input is empty (is the secret available to this workflow?)"
+          exit 1
+        fi
+        case "${LICENSE_TYPE}" in
+          kc.lic|k4.lic) ;;
+          *) echo "::error::license-type must be 'kc.lic' or 'k4.lic' (got '${LICENSE_TYPE}')"; exit 1 ;;
+        esac
+        echo "${KDB_LICENSE_B64}" | base64 -d > "${QHOME}/${LICENSE_TYPE}"
+
+    - name: Add kdb-x to PATH
+      if: ${{ inputs.add-to-path == 'true' }}
+      shell: bash
+      run: |
+        add_path() {
+          # GITHUB_PATH wants native paths, so convert on Windows
+          if command -v cygpath >/dev/null 2>&1; then
+            cygpath -w "$1" >> "$GITHUB_PATH"
+          else
+            echo "$1" >> "$GITHUB_PATH"
+          fi
+        }
+        add_path "${QHOME}"
+        # Binaries are usually in a per-platform subfolder
+        PLATFORM_DIR="${QHOME}/${{ steps.install.outputs.platform }}"
+        if [ -d "${PLATFORM_DIR}" ]; then add_path "${PLATFORM_DIR}"; fi

@@ -1,0 +1,60 @@
+name: 'kdb-x module: qmamba'
+description: 'Install KxSystems/qmamba release into QHOME/mod. Run after setup-kdb-x. Not supported on Windows.'
+
+inputs:
+  version:
+    description: 'qmamba release tag to install (e.g. 0.0.3-alpha), or "latest" for the latest non-prerelease'
+    required: false
+    default: 'latest'
+  qhome:
+    description: 'Override QHOME (defaults to the QHOME env var set by setup-kdb-x)'
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Install qmamba
+      shell: bash
+      env:
+        RUNNER_OS_NAME: ${{ runner.os }}
+        RUNNER_ARCH_NAME: ${{ runner.arch }}
+        QMAMBA_VERSION: ${{ inputs.version }}
+        INPUT_QHOME: ${{ inputs.qhome }}
+      run: |
+        set -euo pipefail
+
+        case "${RUNNER_OS_NAME}-${RUNNER_ARCH_NAME}" in
+          Linux-X64)    QPLATFORM=l64 ;;
+          Linux-ARM64)  QPLATFORM=l64arm ;;
+          macOS-*)      QPLATFORM=m64 ;;
+          Windows-*)    echo "::error::qmamba does not support Windows yet"; exit 1 ;;
+          *) echo "::error::Unsupported runner: ${RUNNER_OS_NAME}-${RUNNER_ARCH_NAME}"; exit 1 ;;
+        esac
+
+        TARGET_HOME="${INPUT_QHOME:-${QHOME:-}}"
+        if [ -z "${TARGET_HOME}" ]; then
+          echo "::error::QHOME is not set. Run setup-kdb-x before this module (or pass the 'qhome' input)."
+          exit 1
+        fi
+
+        ASSET="qmamba-${QPLATFORM}.zip"
+        BASE="https://github.com/KxSystems/qmamba/releases"
+        if [ "${QMAMBA_VERSION}" = "latest" ]; then
+          URL="${BASE}/latest/download/${ASSET}"
+        else
+          URL="${BASE}/download/${QMAMBA_VERSION}/${ASSET}"
+        fi
+
+        WORKDIR="$(mktemp -d)"
+        trap 'rm -rf "${WORKDIR}"' EXIT
+
+        echo "Downloading ${URL}"
+        curl -fsSL --retry 3 -o "${WORKDIR}/${ASSET}" "${URL}"
+        unzip -q -o "${WORKDIR}/${ASSET}" -d "${WORKDIR}/extract"
+
+        # Same as the release's install.sh: copy mod/* into QHOME/mod
+        MODDIR="${TARGET_HOME}/mod"
+        mkdir -p "${MODDIR}"
+        cp -R "${WORKDIR}/extract/qmamba/mod/." "${MODDIR}/"
+        echo "Installed qmamba ${QMAMBA_VERSION} (${QPLATFORM}) to ${MODDIR}/kx/qmamba"
