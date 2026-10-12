@@ -15,7 +15,7 @@ A collection of reusable GitHub Actions for installing and testing kdb-x in CI w
 You will need to provide a license before you can run the github actions.
 Your community license can be used. If you used the KDB-X installer to install KDB-X, the default location for the license is `~/.kx/kc.lic`
 
-You can upload the license through the github UI or follow the steps below. Update the repository name to match your own.
+You can upload the license through the github UI or follow the steps below using the [github CLI](https://docs.github.com/en/github-cli/github-cli/quickstart). Update the repository name to match your own.
 ```bash
 export KDB_LICENSE_B64=$(base64 -w 0 ~/.kx/kc.lic)
 gh secret set KDB_LICENSE_B64 --repo repo/myModule
